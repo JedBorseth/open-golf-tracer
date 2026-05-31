@@ -1,0 +1,130 @@
+from pathlib import Path
+from uuid import uuid4
+
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+
+from app.core.config import Settings, get_settings
+from app.models.job import JobRecord, JobResponse, MediaKind
+from app.services.detector import GolfBallDetector
+from app.services.job_store import JobStore
+from app.services.pipeline import PipelineError, TracerPipeline
+
+router = APIRouter()
+
+
+def get_job_store(settings: Settings = Depends(get_settings)) -> JobStore:
+    return JobStore(settings.job_store_dir)
+
+
+def get_pipeline(settings: Settings = Depends(get_settings)) -> TracerPipeline:
+    detector = GolfBallDetector(
+        model_path=settings.model_path,
+        device=settings.yolo_device,
+        confidence=settings.yolo_confidence,
+    )
+    return TracerPipeline(detector=detector, output_dir=settings.output_dir)
+
+
+@router.post("", response_model=JobResponse)
+async def create_job(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    settings: Settings = Depends(get_settings),
+    store: JobStore = Depends(get_job_store),
+) -> JobResponse:
+    media_kind = _media_kind(file.content_type)
+    if media_kind is None:
+        raise HTTPException(
+            status_code=415,
+            detail="Upload must be an image/* or video/* file.",
+        )
+
+    job_id = uuid4().hex
+    extension = Path(file.filename or "").suffix or _default_extension(media_kind)
+    input_path = settings.upload_dir / f"{job_id}{extension}"
+    bytes_written = 0
+
+    with input_path.open("wb") as output:
+        while chunk := await file.read(1024 * 1024):
+            bytes_written += len(chunk)
+            if bytes_written > settings.max_upload_bytes:
+                input_path.unlink(missing_ok=True)
+                raise HTTPException(status_code=413, detail="Uploaded file is too large.")
+            output.write(chunk)
+
+    record = store.create(
+        JobRecord(
+            id=job_id,
+            media_kind=media_kind,
+            original_filename=file.filename or input_path.name,
+            content_type=file.content_type or "application/octet-stream",
+            input_path=input_path,
+        )
+    )
+
+    background_tasks.add_task(run_job, job_id, settings)
+    return JobResponse.from_record(record)
+
+
+@router.get("/{job_id}", response_model=JobResponse)
+def get_job(
+    job_id: str,
+    store: JobStore = Depends(get_job_store),
+) -> JobResponse:
+    record = store.get(job_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return JobResponse.from_record(record)
+
+
+@router.get("/{job_id}/result")
+def get_result(
+    job_id: str,
+    store: JobStore = Depends(get_job_store),
+) -> FileResponse:
+    record = store.get(job_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    if record.output_path is None or not record.output_path.exists():
+        raise HTTPException(status_code=404, detail="Result is not ready.")
+    return FileResponse(
+        path=record.output_path,
+        filename=record.output_path.name,
+        media_type=record.content_type,
+    )
+
+
+def run_job(job_id: str, settings: Settings) -> None:
+    store = JobStore(settings.job_store_dir)
+    pipeline = TracerPipeline(
+        detector=GolfBallDetector(
+            model_path=settings.model_path,
+            device=settings.yolo_device,
+            confidence=settings.yolo_confidence,
+        ),
+        output_dir=settings.output_dir,
+    )
+
+    try:
+        job = store.mark_running(job_id)
+        output_path = pipeline.process(job)
+        store.mark_complete(job_id, output_path, f"/api/jobs/{job_id}/result")
+    except PipelineError as error:
+        store.mark_failed(job_id, error.code, error.message)
+    except Exception as error:  # noqa: BLE001 - background jobs must surface failures.
+        store.mark_failed(job_id, "processing_failed", str(error))
+
+
+def _media_kind(content_type: str | None) -> MediaKind | None:
+    if content_type is None:
+        return None
+    if content_type.startswith("image/"):
+        return "image"
+    if content_type.startswith("video/"):
+        return "video"
+    return None
+
+
+def _default_extension(media_kind: MediaKind) -> str:
+    return ".jpg" if media_kind == "image" else ".mp4"
