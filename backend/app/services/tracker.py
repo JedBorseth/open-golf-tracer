@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 
 from app.services.detector import Detection, GolfBallDetector
+from app.services.impact import estimate_impact_frame
 from app.services.pipeline_errors import PipelineError
 
 
@@ -37,17 +38,27 @@ class TrackerConfig:
     synthetic_launch_upward_bias: float = 0.85
     camera_motion_compensation: bool = True
     camera_motion_max_px: float = 35.0
+    impact_detection: bool = True
+    impact_pre_roll_frames: int = 2
+    post_impact_stale_frames: int = 4
 
 
 def build_video_track(
     video_path: Path,
     detector: GolfBallDetector,
     config: TrackerConfig | None = None,
+    impact_frame: int | None = None,
 ) -> list[TrackPoint]:
     config = config or TrackerConfig()
     capture = cv2.VideoCapture(str(video_path))
     if not capture.isOpened():
         raise PipelineError("invalid_video", f"Could not read video: {video_path}")
+
+    fps = capture.get(cv2.CAP_PROP_FPS) or 30
+    if impact_frame is None and config.impact_detection:
+        impact_estimate = estimate_impact_frame(video_path, fps)
+        impact_frame = impact_estimate.frame_index if impact_estimate is not None else None
+    track_start_frame = max(0, (impact_frame or 0) - config.impact_pre_roll_frames)
 
     track: list[TrackPoint] = []
     kalman = _create_kalman_filter()
@@ -63,6 +74,7 @@ def build_video_track(
     launch_vector: tuple[float, float] | None = None
     synthetic_launch_remaining = 0
     synthetic_launch_started = False
+    impact_stale_bootstrap_applied = False
 
     try:
         while True:
@@ -82,6 +94,26 @@ def build_video_track(
 
             detections = detector.detect_frame(frame)
             best_detection = _best_detection(detections)
+
+            if frame_index < track_start_frame:
+                if best_detection is not None:
+                    address_point = best_detection.center
+                    previous_detection_point = best_detection.center
+                previous_gray = gray
+                frame_index += 1
+                continue
+
+            if (
+                impact_frame is not None
+                and frame_index >= impact_frame
+                and not impact_stale_bootstrap_applied
+            ):
+                stale_track_hits = max(
+                    stale_track_hits,
+                    config.stale_track_frames - config.post_impact_stale_frames,
+                )
+                impact_stale_bootstrap_applied = True
+
             prediction: tuple[float, float] | None = None
             if kalman_initialized:
                 predicted_state = kalman.predict()

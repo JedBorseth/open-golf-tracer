@@ -145,6 +145,9 @@ def _build_pipeline(settings: Settings) -> TracerPipeline:
             synthetic_launch_upward_bias=settings.tracker_synthetic_launch_upward_bias,
             camera_motion_compensation=settings.tracker_camera_motion_compensation,
             camera_motion_max_px=settings.tracker_camera_motion_max_px,
+            impact_detection=settings.tracker_impact_detection,
+            impact_pre_roll_frames=settings.tracker_impact_pre_roll_frames,
+            post_impact_stale_frames=settings.tracker_post_impact_stale_frames,
         ),
         render_config=RenderConfig(
             tracer_thickness=settings.tracer_thickness,

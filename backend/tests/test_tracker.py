@@ -36,7 +36,7 @@ def test_tracker_fills_short_gaps_with_kalman(tmp_path: Path) -> None:
     track = build_video_track(
         video_path,
         detector,  # type: ignore[arg-type]
-        TrackerConfig(max_gap_frames=4, smooth_window=1),
+        TrackerConfig(max_gap_frames=4, smooth_window=1, impact_detection=False),
     )
 
     assert [point.frame_index for point in track] == [0, 1, 2, 3, 4]
@@ -57,7 +57,12 @@ def test_tracker_rejects_outlier_detection(tmp_path: Path) -> None:
     track = build_video_track(
         video_path,
         detector,  # type: ignore[arg-type]
-        TrackerConfig(detection_gate_px=35, max_gap_frames=3, smooth_window=1),
+        TrackerConfig(
+            detection_gate_px=35,
+            max_gap_frames=3,
+            smooth_window=1,
+            impact_detection=False,
+        ),
     )
 
     frame_two = next(point for point in track if point.frame_index == 2)
@@ -78,6 +83,7 @@ def test_tracker_uses_swing_motion_when_detection_sticks_at_address(tmp_path: Pa
             swing_launch_speed_px=12,
             max_gap_frames=4,
             smooth_window=1,
+            impact_detection=False,
         ),
     )
 
@@ -99,6 +105,7 @@ def test_tracker_forces_launch_when_yolo_detection_stays_stale(tmp_path: Path) -
             swing_launch_speed_px=10,
             max_gap_frames=8,
             smooth_window=1,
+            impact_detection=False,
         ),
     )
 
@@ -121,10 +128,47 @@ def test_tracker_compensates_for_camera_motion_before_stale_check(tmp_path: Path
             max_gap_frames=8,
             smooth_window=1,
             camera_motion_compensation=True,
+            impact_detection=False,
         ),
     )
 
     assert any(point.source == "synthetic_launch" for point in track[3:])
+
+
+def test_tracker_starts_near_impact_frame(tmp_path: Path) -> None:
+    video_path = _write_blank_video(tmp_path / "shot.mp4", frame_count=8)
+    detector = FakeDetector([[_detection(80, 100)] for _ in range(8)])
+
+    track = build_video_track(
+        video_path,
+        detector,  # type: ignore[arg-type]
+        TrackerConfig(impact_detection=False, impact_pre_roll_frames=1, smooth_window=1),
+        impact_frame=5,
+    )
+
+    assert track[0].frame_index == 4
+
+
+def test_tracker_rejects_stale_address_shortly_after_impact(tmp_path: Path) -> None:
+    video_path = _write_blank_video(tmp_path / "shot.mp4", frame_count=8)
+    detector = FakeDetector([[_detection(80, 100)] for _ in range(8)])
+
+    track = build_video_track(
+        video_path,
+        detector,  # type: ignore[arg-type]
+        TrackerConfig(
+            impact_detection=False,
+            impact_pre_roll_frames=0,
+            post_impact_stale_frames=2,
+            synthetic_launch_frames=4,
+            max_gap_frames=8,
+            smooth_window=1,
+        ),
+        impact_frame=3,
+    )
+
+    assert track[0].frame_index == 3
+    assert any(point.source == "synthetic_launch" for point in track[1:4])
 
 
 def _detection(center_x: float, center_y: float, confidence: float = 0.9) -> Detection:
