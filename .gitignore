@@ -15,11 +15,11 @@ __pycache__/
 .ruff_cache/
 .venv/
 
-data/
-uploads/
-outputs/
-models/
-job-store/
+/data/
+/uploads/
+/outputs/
+/models/
+/job-store/
 training/runs/
 *.pt
 *.onnx
