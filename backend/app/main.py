@@ -5,7 +5,6 @@ from app.core.config import get_settings
 from app.routers import jobs
 from app.services.detector import get_device_info
 
-
 settings = get_settings()
 
 app = FastAPI(title=settings.app_name)

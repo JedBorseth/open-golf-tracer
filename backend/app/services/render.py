@@ -1,4 +1,5 @@
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
@@ -8,9 +9,20 @@ from app.services.detector import Detection
 from app.services.pipeline_errors import PipelineError
 from app.services.tracker import TrackPoint
 
-
 TRACE_COLOR = (0, 242, 255)
 BOX_COLOR = (38, 255, 116)
+
+
+@dataclass(frozen=True)
+class RenderConfig:
+    tracer_thickness: int = 8
+    tracer_tail_frames: int = 90
+    tracer_min_alpha: float = 0.15
+    tracer_max_alpha: float = 0.9
+    tracer_horizon_ratio: float = 0.42
+    tracer_max_gap_frames: int = 4
+    tracer_min_confidence: float = 0.12
+    marker_min_confidence: float = 0.2
 
 
 def render_image_trace(
@@ -51,7 +63,9 @@ def render_video_trace(
     input_path: Path,
     output_path: Path,
     track: list[TrackPoint],
+    config: RenderConfig | None = None,
 ) -> None:
+    config = config or RenderConfig()
     capture = cv2.VideoCapture(str(input_path))
     if not capture.isOpened():
         raise PipelineError("invalid_video", f"Could not read video: {input_path}")
@@ -73,7 +87,7 @@ def render_video_trace(
         raise PipelineError("render_failed", f"Could not open video writer: {temp_path}")
 
     points_by_frame = {point.frame_index: point for point in track}
-    drawn_points: list[tuple[int, int]] = []
+    drawn_points: list[TrackPoint] = []
     frame_index = 0
 
     try:
@@ -84,12 +98,9 @@ def render_video_trace(
 
             point = points_by_frame.get(frame_index)
             if point is not None:
-                drawn_points.append((int(round(point.x)), int(round(point.y))))
+                drawn_points.append(point)
 
-            if len(drawn_points) > 1:
-                cv2.polylines(frame, [_points_to_array(drawn_points)], False, TRACE_COLOR, 4)
-            if drawn_points:
-                cv2.circle(frame, drawn_points[-1], 8, TRACE_COLOR, -1)
+            _draw_perspective_trace(frame, drawn_points, frame_index, height, config)
 
             writer.write(frame)
             frame_index += 1
@@ -101,8 +112,87 @@ def render_video_trace(
     temp_path.unlink(missing_ok=True)
 
 
-def _points_to_array(points: list[tuple[int, int]]) -> np.ndarray:
-    return np.array(points, dtype=np.int32).reshape((-1, 1, 2))
+def _draw_perspective_trace(
+    frame: np.ndarray,
+    points: list[TrackPoint],
+    frame_index: int,
+    frame_height: int,
+    config: RenderConfig,
+) -> None:
+    visible_points = [
+        point
+        for point in points
+        if frame_index - point.frame_index <= config.tracer_tail_frames
+        and point.confidence >= config.tracer_min_confidence
+    ]
+    if not visible_points:
+        return
+
+    if len(visible_points) > 1:
+        for previous, current in zip(visible_points, visible_points[1:], strict=False):
+            if current.frame_index - previous.frame_index > config.tracer_max_gap_frames:
+                continue
+            age = frame_index - current.frame_index
+            recency = 1.0 - min(age / max(config.tracer_tail_frames, 1), 1.0)
+            confidence = min((previous.confidence + current.confidence) / 2.0, 1.0)
+            alpha = _lerp(config.tracer_min_alpha, config.tracer_max_alpha, recency) * confidence
+            thickness = _segment_thickness(current, frame_height, config)
+            _draw_alpha_line(
+                frame,
+                _screen_point(previous),
+                _screen_point(current),
+                TRACE_COLOR,
+                thickness,
+                alpha,
+            )
+
+    latest = visible_points[-1]
+    if latest.confidence >= config.marker_min_confidence:
+        radius = max(3, int(round(_segment_thickness(latest, frame_height, config) * 1.3)))
+        _draw_alpha_circle(frame, _screen_point(latest), radius, TRACE_COLOR, 0.85)
+
+
+def _segment_thickness(point: TrackPoint, frame_height: int, config: RenderConfig) -> int:
+    horizon_y = frame_height * config.tracer_horizon_ratio
+    depth = np.clip((point.y - horizon_y) / max(frame_height - horizon_y, 1.0), 0.0, 1.0)
+    perspective_scale = 0.45 + depth * 0.75
+    confidence_scale = 0.65 + min(point.confidence, 1.0) * 0.35
+    return max(1, int(round(config.tracer_thickness * perspective_scale * confidence_scale)))
+
+
+def _draw_alpha_line(
+    frame: np.ndarray,
+    start: tuple[int, int],
+    end: tuple[int, int],
+    color: tuple[int, int, int],
+    thickness: int,
+    alpha: float,
+) -> None:
+    overlay = frame.copy()
+    cv2.line(overlay, start, end, color, thickness, cv2.LINE_AA)
+    clamped_alpha = float(np.clip(alpha, 0.0, 1.0))
+    cv2.addWeighted(overlay, clamped_alpha, frame, 1.0 - clamped_alpha, 0, frame)
+
+
+def _draw_alpha_circle(
+    frame: np.ndarray,
+    center: tuple[int, int],
+    radius: int,
+    color: tuple[int, int, int],
+    alpha: float,
+) -> None:
+    overlay = frame.copy()
+    cv2.circle(overlay, center, radius, color, -1, cv2.LINE_AA)
+    clamped_alpha = float(np.clip(alpha, 0.0, 1.0))
+    cv2.addWeighted(overlay, clamped_alpha, frame, 1.0 - clamped_alpha, 0, frame)
+
+
+def _screen_point(point: TrackPoint) -> tuple[int, int]:
+    return (int(round(point.x)), int(round(point.y)))
+
+
+def _lerp(start: float, end: float, amount: float) -> float:
+    return start + (end - start) * np.clip(amount, 0.0, 1.0)
 
 
 def _transcode_with_ffmpeg(input_path: Path, output_path: Path) -> None:

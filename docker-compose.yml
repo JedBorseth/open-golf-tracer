@@ -8,6 +8,7 @@ services:
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
     gpus: all
+    shm_size: "1gb"
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
@@ -15,6 +16,8 @@ services:
       - ./outputs:/app/outputs
       - ./models:/app/models
       - ./job-store:/app/job-store
+      - ./training:/app/training
+      - ./data:/app/data
     deploy:
       resources:
         reservations:

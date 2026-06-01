@@ -12,6 +12,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--batch", type=int, default=8)
     parser.add_argument("--device", default="0", help="Use 0 for the first NVIDIA GPU or cpu.")
+    parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--project", default="training/runs")
     parser.add_argument("--name", default="golf-ball-yolo11s")
     return parser.parse_args()
@@ -26,6 +27,7 @@ def main() -> None:
         imgsz=args.imgsz,
         batch=args.batch,
         device=args.device,
+        workers=args.workers,
         project=args.project,
         name=args.name,
     )

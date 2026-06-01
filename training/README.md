@@ -30,15 +30,24 @@ Values are normalized from `0` to `1`. For this project, `class_id` is `0` for
 
 ## Train
 
+If you exported from Label Studio in YOLO format, prepare the dataset first:
+
+```bash
+python training/prepare_yolo_dataset.py \
+  training/project-2-at-2026-06-01-02-01-abfd969d \
+  --output-dir data/golf-ball
+```
+
 On the Debian server with the GTX 1660 Ti, start conservative because the card has
 6GB VRAM:
 
 ```bash
 python training/train_yolo.py \
-  --data training/data.yaml \
+  --data data/golf-ball/data.yaml \
   --model yolo11s.pt \
   --imgsz 640 \
   --batch 8 \
+  --workers 2 \
   --device 0
 ```
 

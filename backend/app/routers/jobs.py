@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Annotated
 from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
@@ -9,29 +10,26 @@ from app.models.job import JobRecord, JobResponse, MediaKind
 from app.services.detector import GolfBallDetector
 from app.services.job_store import JobStore
 from app.services.pipeline import PipelineError, TracerPipeline
+from app.services.render import RenderConfig
+from app.services.tracker import TrackerConfig
 
 router = APIRouter()
 
 
-def get_job_store(settings: Settings = Depends(get_settings)) -> JobStore:
+def get_job_store(settings: Annotated[Settings, Depends(get_settings)]) -> JobStore:
     return JobStore(settings.job_store_dir)
 
 
-def get_pipeline(settings: Settings = Depends(get_settings)) -> TracerPipeline:
-    detector = GolfBallDetector(
-        model_path=settings.model_path,
-        device=settings.yolo_device,
-        confidence=settings.yolo_confidence,
-    )
-    return TracerPipeline(detector=detector, output_dir=settings.output_dir)
+def get_pipeline(settings: Annotated[Settings, Depends(get_settings)]) -> TracerPipeline:
+    return _build_pipeline(settings)
 
 
 @router.post("", response_model=JobResponse)
 async def create_job(
     background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
-    settings: Settings = Depends(get_settings),
-    store: JobStore = Depends(get_job_store),
+    file: Annotated[UploadFile, File()],
+    settings: Annotated[Settings, Depends(get_settings)],
+    store: Annotated[JobStore, Depends(get_job_store)],
 ) -> JobResponse:
     media_kind = _media_kind(file.content_type)
     if media_kind is None:
@@ -70,7 +68,7 @@ async def create_job(
 @router.get("/{job_id}", response_model=JobResponse)
 def get_job(
     job_id: str,
-    store: JobStore = Depends(get_job_store),
+    store: Annotated[JobStore, Depends(get_job_store)],
 ) -> JobResponse:
     record = store.get(job_id)
     if record is None:
@@ -81,7 +79,7 @@ def get_job(
 @router.get("/{job_id}/result")
 def get_result(
     job_id: str,
-    store: JobStore = Depends(get_job_store),
+    store: Annotated[JobStore, Depends(get_job_store)],
 ) -> FileResponse:
     record = store.get(job_id)
     if record is None:
@@ -97,14 +95,7 @@ def get_result(
 
 def run_job(job_id: str, settings: Settings) -> None:
     store = JobStore(settings.job_store_dir)
-    pipeline = TracerPipeline(
-        detector=GolfBallDetector(
-            model_path=settings.model_path,
-            device=settings.yolo_device,
-            confidence=settings.yolo_confidence,
-        ),
-        output_dir=settings.output_dir,
-    )
+    pipeline = _build_pipeline(settings)
 
     try:
         job = store.mark_running(job_id)
@@ -128,3 +119,26 @@ def _media_kind(content_type: str | None) -> MediaKind | None:
 
 def _default_extension(media_kind: MediaKind) -> str:
     return ".jpg" if media_kind == "image" else ".mp4"
+
+
+def _build_pipeline(settings: Settings) -> TracerPipeline:
+    detector = GolfBallDetector(
+        model_path=settings.model_path,
+        device=settings.yolo_device,
+        confidence=settings.yolo_confidence,
+    )
+    return TracerPipeline(
+        detector=detector,
+        output_dir=settings.output_dir,
+        tracker_config=TrackerConfig(
+            max_gap_frames=settings.tracker_max_gap_frames,
+            detection_gate_px=settings.tracker_detection_gate_px,
+            optical_flow_gate_px=settings.tracker_optical_flow_gate_px,
+            smooth_window=settings.tracker_smooth_window,
+        ),
+        render_config=RenderConfig(
+            tracer_thickness=settings.tracer_thickness,
+            tracer_tail_frames=settings.tracer_tail_frames,
+            tracer_horizon_ratio=settings.tracer_horizon_ratio,
+        ),
+    )

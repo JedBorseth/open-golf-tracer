@@ -19,6 +19,15 @@ class Settings(BaseSettings):
     max_upload_mb: int = 512
     require_cuda: bool = False
 
+    tracker_max_gap_frames: int = 12
+    tracker_detection_gate_px: float = 120.0
+    tracker_optical_flow_gate_px: float = 80.0
+    tracker_smooth_window: int = 5
+
+    tracer_thickness: int = 8
+    tracer_tail_frames: int = 90
+    tracer_horizon_ratio: float = 0.42
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
