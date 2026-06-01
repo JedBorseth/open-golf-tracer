@@ -1,0 +1,15 @@
+[Unit]
+Description=Golf Tracer GitHub deploy daemon
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jedborseth
+WorkingDirectory=/home/jedborseth/golf-tracer
+ExecStart=/usr/bin/python3 /home/jedborseth/golf-tracer/deploy/github_deploy_daemon.py --repo JedBorseth/open-golf-tracer --branch main --workdir /home/jedborseth/golf-tracer --interval 30
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

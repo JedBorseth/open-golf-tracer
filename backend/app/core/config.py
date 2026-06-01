@@ -23,6 +23,16 @@ class Settings(BaseSettings):
     tracker_detection_gate_px: float = 120.0
     tracker_optical_flow_gate_px: float = 80.0
     tracker_smooth_window: int = 5
+    tracker_stationary_address_frames: int = 4
+    tracker_stationary_address_radius_px: float = 8.0
+    tracker_swing_motion_roi_px: int = 140
+    tracker_swing_launch_speed_px: float = 7.0
+    tracker_stale_track_frames: int = 30
+    tracker_stale_track_radius_px: float = 80.0
+    tracker_synthetic_launch_frames: int = 45
+    tracker_synthetic_launch_upward_bias: float = 0.85
+    tracker_camera_motion_compensation: bool = True
+    tracker_camera_motion_max_px: float = 35.0
 
     tracer_thickness: int = 8
     tracer_tail_frames: int = 90

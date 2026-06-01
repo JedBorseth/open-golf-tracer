@@ -65,6 +65,68 @@ def test_tracker_rejects_outlier_detection(tmp_path: Path) -> None:
     assert frame_two.x < 100
 
 
+def test_tracker_uses_swing_motion_when_detection_sticks_at_address(tmp_path: Path) -> None:
+    video_path = _write_swing_motion_video(tmp_path / "shot.mp4", frame_count=5)
+    detector = FakeDetector([[_detection(80, 100)] for _ in range(5)])
+
+    track = build_video_track(
+        video_path,
+        detector,  # type: ignore[arg-type]
+        TrackerConfig(
+            stationary_address_frames=1,
+            stationary_address_radius_px=5,
+            swing_launch_speed_px=12,
+            max_gap_frames=4,
+            smooth_window=1,
+        ),
+    )
+
+    assert track[0].source == "yolo"
+    assert any(point.source == "synthetic_launch" and point.x > 90 for point in track[1:])
+
+
+def test_tracker_forces_launch_when_yolo_detection_stays_stale(tmp_path: Path) -> None:
+    video_path = _write_blank_video(tmp_path / "shot.mp4", frame_count=8)
+    detector = FakeDetector([[_detection(80, 100)] for _ in range(8)])
+
+    track = build_video_track(
+        video_path,
+        detector,  # type: ignore[arg-type]
+        TrackerConfig(
+            stale_track_frames=3,
+            stale_track_radius_px=20,
+            synthetic_launch_frames=8,
+            swing_launch_speed_px=10,
+            max_gap_frames=8,
+            smooth_window=1,
+        ),
+    )
+
+    assert any(point.source == "synthetic_launch" for point in track[3:])
+    assert track[-1].y < track[0].y
+
+
+def test_tracker_compensates_for_camera_motion_before_stale_check(tmp_path: Path) -> None:
+    video_path = _write_panning_background_video(tmp_path / "shot.mp4", frame_count=8)
+    detector = FakeDetector([[_detection(80 + index * 5, 100)] for index in range(8)])
+
+    track = build_video_track(
+        video_path,
+        detector,  # type: ignore[arg-type]
+        TrackerConfig(
+            stale_track_frames=3,
+            stale_track_radius_px=12,
+            synthetic_launch_frames=8,
+            swing_launch_speed_px=6,
+            max_gap_frames=8,
+            smooth_window=1,
+            camera_motion_compensation=True,
+        ),
+    )
+
+    assert any(point.source == "synthetic_launch" for point in track[3:])
+
+
 def _detection(center_x: float, center_y: float, confidence: float = 0.9) -> Detection:
     return Detection(
         x=center_x - 2,
@@ -87,5 +149,40 @@ def _write_blank_video(path: Path, frame_count: int) -> Path:
     assert writer.isOpened()
     for _ in range(frame_count):
         writer.write(np.zeros((180, 320, 3), dtype=np.uint8))
+    writer.release()
+    return path
+
+
+def _write_swing_motion_video(path: Path, frame_count: int) -> Path:
+    writer = cv2.VideoWriter(
+        str(path),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        30,
+        (320, 180),
+    )
+    assert writer.isOpened()
+    for index in range(frame_count):
+        frame = np.zeros((180, 320, 3), dtype=np.uint8)
+        x = 40 + index * 16
+        cv2.rectangle(frame, (x, 85), (x + 28, 115), (255, 255, 255), -1)
+        writer.write(frame)
+    writer.release()
+    return path
+
+
+def _write_panning_background_video(path: Path, frame_count: int) -> Path:
+    writer = cv2.VideoWriter(
+        str(path),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        30,
+        (320, 180),
+    )
+    assert writer.isOpened()
+    base_points = [(30 + (index * 37) % 260, 20 + (index * 29) % 130) for index in range(40)]
+    for frame_index in range(frame_count):
+        frame = np.zeros((180, 320, 3), dtype=np.uint8)
+        for x, y in base_points:
+            cv2.circle(frame, (x + frame_index * 5, y), 2, (255, 255, 255), -1)
+        writer.write(frame)
     writer.release()
     return path
