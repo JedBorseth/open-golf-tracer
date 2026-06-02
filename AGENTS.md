@@ -4,7 +4,7 @@
 
 ### Product overview
 
-Golf Tracer (`open-golf-tracer`) is a two-app repo: **FastAPI backend** (port 8000) and **TanStack Start frontend** (port 3000). Job state is JSON on disk under `job-store/`; no database container. See root `README.md` for layout and API.
+Golf Tracer (`open-golf-tracer`) is a two-app repo: **FastAPI backend** (port 8000) and **TanStack Start frontend** (port 3000). The default pipeline tracks **club-head motion** and renders a swing path with an impact marker (no YOLO weights required). Job state is JSON on disk under `job-store/`; no database container. See root `README.md` for layout and API.
 
 ### One-time VM packages
 
@@ -27,7 +27,6 @@ Copy env files once if missing: `cp .env.example .env` and `cp frontend/.env.exa
 **Backend** (from `backend/`, with venv activated):
 
 ```bash
-MODEL_PATH=../models/yolov11s-golf-ball.pt \
 UPLOAD_DIR=../uploads \
 OUTPUT_DIR=../outputs \
 JOB_STORE_DIR=../job-store \

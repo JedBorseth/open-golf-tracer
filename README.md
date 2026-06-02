@@ -1,17 +1,17 @@
 # Golf Tracer
 
-Mobile web app for golf shot tracers. The frontend is a minimal TanStack Start
-upload flow, and the backend is a FastAPI service that queues image/video jobs,
-runs YOLOv11s golf ball detection, tracks the ball, renders a tracer, and returns
-the processed result.
+Mobile web app for golf swing visualization. The frontend is a minimal TanStack
+Start upload flow, and the backend is a FastAPI service that queues image/video
+jobs, tracks club-head motion through the swing, renders the club path with an
+impact marker, and returns the processed result.
 
 ## Repository Layout
 
 ```text
 frontend/   TanStack Start mobile upload app
-backend/    FastAPI API, job state, inference, tracking, rendering
-training/   YOLOv11s dataset template and training script
-models/     Runtime model weights, ignored by git
+backend/    FastAPI API, job state, club motion tracking, rendering
+training/   Optional YOLO dataset template (legacy ball model)
+models/     Optional custom weights, ignored by git
 uploads/    Uploaded media, ignored by git
 outputs/    Processed results, ignored by git
 job-store/  File-backed job metadata, ignored by git
@@ -33,11 +33,9 @@ cd backend
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
-MODEL_PATH=../models/yolov11s-golf-ball.pt \
 UPLOAD_DIR=../uploads \
 OUTPUT_DIR=../outputs \
 JOB_STORE_DIR=../job-store \
-YOLO_DEVICE=cpu \
 uvicorn app.main:app --reload
 ```
 
@@ -104,17 +102,15 @@ The server env sets `REQUIRE_CUDA=true`, so `/health` reports `ready: false` if
 the backend container cannot see CUDA. Local development can keep
 `REQUIRE_CUDA=false` and use `YOLO_DEVICE=cpu`.
 
-## Model Weights
+## Tracking
 
-Place trained weights at:
+Swing path tracing uses **motion-based club-head tracking** (frame differencing,
+optical flow, Kalman smoothing) plus audio/visual **impact detection**. No YOLO
+weights are required for the default pipeline.
 
-```text
-models/yolov11s-golf-ball.pt
-```
-
-Until weights exist, uploads should complete as failed jobs with
-`model_not_found`. That is expected and still validates upload, job persistence,
-polling, and frontend error display.
+Optional legacy ball-detector weights (`models/yolov11s-golf-ball.pt`) are unused
+by the club swing pipeline but remain available under `training/` if you want to
+experiment with detection-assisted tracking later.
 
 ## API
 
@@ -127,6 +123,6 @@ polling, and frontend error display.
 
 - Job state is stored as JSON files on disk.
 - Background jobs run inside the FastAPI process.
-- Video tracking is an initial YOLO plus optical-flow/Kalman implementation and
-  will improve once real golf shot clips and trained weights are available.
+- Club tracking is motion-based and works best on clear swing videos (down-the-line
+  or face-on). A dedicated club-head YOLO model can be added later for tougher angles.
 # open-golf-tracer
