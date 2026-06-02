@@ -11,5 +11,5 @@ pip install -e .
 uvicorn app.main:app --reload
 ```
 
-The default model path is `/app/models/yolov11s-golf-ball.pt` for Docker. Override it with
-`MODEL_PATH` when running locally.
+Swing tracking is motion-based and does not require model weights. Optional legacy YOLO
+weights under `models/` are unused by the default pipeline.

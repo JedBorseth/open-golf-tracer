@@ -14,10 +14,13 @@ class Settings(BaseSettings):
     job_store_dir: Path = Path("/app/job-store")
     model_path: Path = Path("/app/models/yolov11s-golf-ball.pt")
 
-    yolo_device: str = "0"
-    yolo_confidence: float = 0.25
     max_upload_mb: int = 512
     require_cuda: bool = False
+
+    club_backswing_frames: int = 24
+    club_follow_through_frames: int = 18
+    club_motion_threshold: float = 16.0
+    club_roi_top_ratio: float = 0.22
 
     tracker_max_gap_frames: int = 12
     tracker_detection_gate_px: float = 120.0
@@ -38,7 +41,7 @@ class Settings(BaseSettings):
     tracker_post_impact_stale_frames: int = 4
 
     tracer_thickness: int = 8
-    tracer_tail_frames: int = 90
+    tracer_tail_frames: int = 120
     tracer_horizon_ratio: float = 0.42
 
     model_config = SettingsConfigDict(

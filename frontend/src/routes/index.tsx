@@ -63,18 +63,19 @@ function Home() {
   return (
     <main className="app-shell">
       <section className="hero">
-        <p className="eyebrow">Golf Tracer MVP</p>
-        <h1>Upload a shot. Get a tracer back.</h1>
+        <p className="eyebrow">Golf Swing Tracer</p>
+        <h1>Upload a swing. See the club path.</h1>
         <p className="lede">
-          Start with an image or video from your phone. The backend queues the
-          job, runs YOLO detection, tracks the ball, and renders the result.
+          Upload a down-the-line or face-on swing video. We track club-head
+          motion, draw the swing path, and mark impact. Still photos get a hint
+          to upload video instead.
         </p>
       </section>
 
       <section className="card">
         <label className="drop-zone">
-          <span>Choose image or video</span>
-          <small>JPEG, PNG, MOV, or MP4</small>
+          <span>Choose swing video (recommended)</span>
+          <small>MP4 or MOV — JPEG/PNG supported with limited output</small>
           <input
             accept="image/*,video/*"
             type="file"
@@ -102,7 +103,7 @@ function Home() {
         ) : null}
 
         <button disabled={!file || isUploading} onClick={() => void upload()}>
-          {isUploading ? 'Uploading...' : 'Start tracer job'}
+          {isUploading ? 'Uploading...' : 'Trace swing path'}
         </button>
       </section>
 
