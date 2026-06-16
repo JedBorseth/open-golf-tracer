@@ -3,8 +3,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+import app.services.pipeline as pipeline_module
 from app.models.job import JobRecord
-from app.services.club_tracker import ClubTrackerConfig
+from app.services.club_tracker import ClubTrackerConfig, SwingTrack
 from app.services.detector import Detection
 from app.services.pipeline import TracerPipeline
 from app.services.render import RenderConfig
@@ -68,6 +69,52 @@ def test_hybrid_pipeline_produces_video_with_physics_trace(tmp_path: Path) -> No
     assert output_path.stat().st_size > 0
 
 
+def test_hybrid_pipeline_draws_predicted_flight_without_model_on_final_impact(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    video_path = _write_blank_video(tmp_path / "late-impact.mp4", frame_count=6)
+    output_dir = tmp_path / "outputs"
+    swing = SwingTrack(
+        points=[],
+        impact_frame_index=5,
+        impact_x=100.0,
+        impact_y=130.0,
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "build_club_swing_track",
+        lambda input_path, config: swing,
+    )
+    pipeline = TracerPipeline(
+        output_dir=output_dir,
+        detector=None,
+        tracker_config=TrackerConfig(
+            synthetic_launch_frames=10,
+            swing_launch_speed_px=7,
+            smooth_window=1,
+        ),
+        render_config=RenderConfig(
+            tracer_tail_frames=24,
+            stabilize_tracer=False,
+        ),
+    )
+
+    output_path = pipeline.process(
+        JobRecord(
+            id="late-impact",
+            media_kind="video",
+            original_filename="late-impact.mp4",
+            content_type="video/mp4",
+            input_path=video_path,
+        ),
+    )
+
+    final_frame = _read_frame(output_path, frame_index=5)
+
+    assert _ball_flight_pixel_count(final_frame) > 25
+
+
 def _detection(center_x: float, center_y: float, confidence: float = 0.9) -> Detection:
     return Detection(
         x=center_x - 2,
@@ -98,3 +145,36 @@ def _write_hybrid_swing_video(path: Path, frame_count: int) -> Path:
         writer.write(frame)
     writer.release()
     return path
+
+
+def _write_blank_video(path: Path, frame_count: int) -> Path:
+    writer = cv2.VideoWriter(
+        str(path),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        30,
+        (320, 180),
+    )
+    assert writer.isOpened()
+    for _ in range(frame_count):
+        writer.write(np.zeros((180, 320, 3), dtype=np.uint8))
+    writer.release()
+    return path
+
+
+def _read_frame(path: Path, frame_index: int) -> np.ndarray:
+    capture = cv2.VideoCapture(str(path))
+    assert capture.isOpened()
+    capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+    ok, frame = capture.read()
+    capture.release()
+    assert ok
+    return frame
+
+
+def _ball_flight_pixel_count(frame: np.ndarray) -> int:
+    mask = cv2.inRange(
+        frame,
+        np.array([0, 140, 160], dtype=np.uint8),
+        np.array([100, 255, 255], dtype=np.uint8),
+    )
+    return int(cv2.countNonZero(mask))

@@ -88,9 +88,7 @@ def render_hybrid_trace(
         ),
     )
     swing_points_by_frame = {point.frame_index: point for point in swing.points}
-    flight_points_by_frame = {point.frame_index: point for point in ball_flight}
     drawn_swing_points: list[TrackPoint] = []
-    drawn_flight_points: list[TrackPoint] = []
     frame_index = 0
     impact_frame = swing.impact_frame_index
 
@@ -104,10 +102,6 @@ def render_hybrid_trace(
             if swing_point is not None:
                 drawn_swing_points.append(swing_point)
 
-            flight_point = flight_points_by_frame.get(frame_index)
-            if flight_point is not None:
-                drawn_flight_points.append(flight_point)
-
             _draw_swing_path(
                 frame,
                 drawn_swing_points,
@@ -117,9 +111,15 @@ def render_hybrid_trace(
                 config,
                 scene_transforms,
             )
+            flight_points_to_draw = _predicted_flight_points_for_frame(
+                ball_address,
+                ball_flight,
+                impact_frame,
+                frame_index,
+            )
             _draw_ball_flight_path(
                 frame,
-                drawn_flight_points,
+                flight_points_to_draw,
                 frame_index,
                 height,
                 config,
@@ -304,6 +304,28 @@ def _draw_ball_flight_path(
         BALL_FLIGHT_COLOR,
         0.8,
     )
+
+
+def _predicted_flight_points_for_frame(
+    ball_address: TrackPoint | None,
+    ball_flight: list[TrackPoint],
+    impact_frame: int | None,
+    frame_index: int,
+) -> list[TrackPoint]:
+    if impact_frame is None or frame_index < impact_frame or not ball_flight:
+        return []
+
+    if ball_address is None:
+        return ball_flight
+
+    anchor = TrackPoint(
+        frame_index=impact_frame,
+        x=ball_address.x,
+        y=ball_address.y,
+        confidence=ball_address.confidence,
+        source=ball_address.source,
+    )
+    return [anchor, *ball_flight]
 
 
 def _draw_ball_address_marker(

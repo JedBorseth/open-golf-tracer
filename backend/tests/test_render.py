@@ -1,7 +1,13 @@
 import numpy as np
 
 from app.services.club_tracker import SwingTrack
-from app.services.render import RenderConfig, _draw_swing_path, _screen_point, _segment_thickness
+from app.services.render import (
+    RenderConfig,
+    _draw_swing_path,
+    _predicted_flight_points_for_frame,
+    _screen_point,
+    _segment_thickness,
+)
 from app.services.scene import SceneFrameTransform
 from app.services.tracker import TrackPoint
 
@@ -58,3 +64,29 @@ def test_screen_point_reprojects_with_scene_motion() -> None:
     point = TrackPoint(frame_index=0, x=40.0, y=90.0, confidence=0.9, source="motion")
 
     assert _screen_point(point, frame_index=2, scene_transforms=transforms) == (51, 92)
+
+
+def test_predicted_flight_points_start_at_impact_frame() -> None:
+    ball_address = TrackPoint(2, 100.0, 130.0, 0.9, "ball_address")
+    flight = [
+        TrackPoint(11, 110.0, 115.0, 0.7, "physics_flight"),
+        TrackPoint(12, 120.0, 104.0, 0.68, "physics_flight"),
+    ]
+
+    assert _predicted_flight_points_for_frame(
+        ball_address,
+        flight,
+        impact_frame=10,
+        frame_index=9,
+    ) == []
+
+    predicted = _predicted_flight_points_for_frame(
+        ball_address,
+        flight,
+        impact_frame=10,
+        frame_index=10,
+    )
+
+    assert [point.frame_index for point in predicted] == [10, 11, 12]
+    assert predicted[0].x == ball_address.x
+    assert predicted[0].y == ball_address.y
