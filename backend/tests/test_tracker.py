@@ -10,6 +10,7 @@ from app.services.tracker import (
     build_physics_flight,
     build_video_track,
     find_ball_address,
+    find_ball_address_by_vision,
 )
 
 
@@ -159,6 +160,25 @@ def test_find_ball_address_uses_stable_pre_impact_cluster(tmp_path: Path) -> Non
     assert abs(address.y - 100) <= 1
 
 
+def test_find_ball_address_by_vision_uses_stable_bright_ball(tmp_path: Path) -> None:
+    video_path = _write_ball_address_video(tmp_path / "address.mp4", frame_count=6)
+
+    address = find_ball_address_by_vision(
+        video_path,
+        TrackerConfig(
+            stationary_address_frames=3,
+            vision_ball_min_brightness=150,
+            vision_ball_max_area_px=200,
+        ),
+        before_frame=5,
+    )
+
+    assert address is not None
+    assert address.source == "ball_address_vision"
+    assert abs(address.x - 78) <= 2
+    assert abs(address.y - 124) <= 2
+
+
 def test_physics_flight_moves_up_then_falls_from_club_velocity() -> None:
     address = TrackPoint(5, 100.0, 120.0, 0.9, "ball_address")
     club_points = [
@@ -241,6 +261,23 @@ def _write_panning_background_video(path: Path, frame_count: int) -> Path:
         frame = np.zeros((180, 320, 3), dtype=np.uint8)
         for x, y in base_points:
             cv2.circle(frame, (x + frame_index * 5, y), 2, (255, 255, 255), -1)
+        writer.write(frame)
+    writer.release()
+    return path
+
+
+def _write_ball_address_video(path: Path, frame_count: int) -> Path:
+    writer = cv2.VideoWriter(
+        str(path),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        30,
+        (320, 180),
+    )
+    assert writer.isOpened()
+    for index in range(frame_count):
+        frame = np.zeros((180, 320, 3), dtype=np.uint8)
+        cv2.circle(frame, (78, 124), 5, (245, 245, 245), -1)
+        cv2.rectangle(frame, (25 + index * 14, 90), (40 + index * 14, 120), (255, 255, 255), -1)
         writer.write(frame)
     writer.release()
     return path

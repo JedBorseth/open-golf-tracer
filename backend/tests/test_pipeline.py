@@ -115,6 +115,25 @@ def test_hybrid_pipeline_draws_predicted_flight_without_model_on_final_impact(
     assert _ball_flight_pixel_count(final_frame) > 25
 
 
+def test_pipeline_resolves_ball_address_with_vision_when_model_is_missing(
+    tmp_path: Path,
+) -> None:
+    video_path = _write_hybrid_swing_video(tmp_path / "swing.mp4", frame_count=12)
+    pipeline = TracerPipeline(output_dir=tmp_path / "outputs", detector=None)
+    swing = SwingTrack(
+        points=[],
+        impact_frame_index=8,
+        impact_x=120.0,
+        impact_y=120.0,
+    )
+
+    address = pipeline._resolve_ball_address(video_path, swing)
+
+    assert address.source == "ball_address_vision"
+    assert abs(address.x - 75) <= 2
+    assert abs(address.y - 125) <= 2
+
+
 def _detection(center_x: float, center_y: float, confidence: float = 0.9) -> Detection:
     return Detection(
         x=center_x - 2,

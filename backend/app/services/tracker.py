@@ -28,6 +28,10 @@ class TrackerConfig:
     smooth_window: int = 5
     stationary_address_frames: int = 4
     stationary_address_radius_px: float = 8.0
+    vision_ball_min_area_px: float = 6.0
+    vision_ball_max_area_px: float = 900.0
+    vision_ball_min_brightness: int = 145
+    vision_ball_roi_top_ratio: float = 0.25
     swing_motion_min_px: float = 2.0
     swing_motion_roi_px: int = 140
     swing_launch_speed_px: float = 7.0
@@ -296,37 +300,35 @@ def find_ball_address(
     finally:
         capture.release()
 
-    if not candidates:
-        return None
+    return _stable_address_from_candidates(candidates, config, source="ball_address")
 
-    clusters: list[list[TrackPoint]] = []
-    radius = max(config.stationary_address_radius_px * 2.0, 12.0)
-    for candidate in candidates:
-        for cluster in clusters:
-            center = _median_point(cluster)
-            if _distance((candidate.x, candidate.y), center) <= radius:
-                cluster.append(candidate)
+
+def find_ball_address_by_vision(
+    video_path: Path,
+    config: TrackerConfig | None = None,
+    before_frame: int | None = None,
+) -> TrackPoint | None:
+    config = config or TrackerConfig()
+    capture = cv2.VideoCapture(str(video_path))
+    if not capture.isOpened():
+        raise PipelineError("invalid_video", f"Could not read video: {video_path}")
+
+    candidates: list[TrackPoint] = []
+    frame_index = 0
+    try:
+        while True:
+            if before_frame is not None and frame_index >= before_frame:
                 break
-        else:
-            clusters.append([candidate])
+            ok, frame = capture.read()
+            if not ok:
+                break
 
-    best_cluster = max(
-        clusters,
-        key=lambda cluster: (len(cluster), sum(point.confidence for point in cluster)),
-    )
-    if len(best_cluster) < min(config.stationary_address_frames, 2):
-        return max(candidates, key=lambda point: point.confidence)
+            candidates.extend(_vision_ball_candidates(frame, frame_index, config))
+            frame_index += 1
+    finally:
+        capture.release()
 
-    x, y = _median_point(best_cluster)
-    confidence = float(np.mean([point.confidence for point in best_cluster]))
-    frame_index = int(round(np.median([point.frame_index for point in best_cluster])))
-    return TrackPoint(
-        frame_index=frame_index,
-        x=x,
-        y=y,
-        confidence=confidence,
-        source="ball_address",
-    )
+    return _stable_address_from_candidates(candidates, config, source="ball_address_vision")
 
 
 def build_physics_flight(
@@ -369,6 +371,91 @@ def _best_detection(detections: list[Detection]) -> Detection | None:
     if not detections:
         return None
     return max(detections, key=lambda detection: detection.confidence)
+
+
+def _vision_ball_candidates(
+    frame: np.ndarray,
+    frame_index: int,
+    config: TrackerConfig,
+) -> list[TrackPoint]:
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    roi_top = int(gray.shape[0] * config.vision_ball_roi_top_ratio)
+    mask = cv2.inRange(gray, config.vision_ball_min_brightness, 255)
+    mask[:roi_top, :] = 0
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    candidates: list[TrackPoint] = []
+    for contour in contours:
+        area = float(cv2.contourArea(contour))
+        if area < config.vision_ball_min_area_px or area > config.vision_ball_max_area_px:
+            continue
+        x, y, width, height = cv2.boundingRect(contour)
+        if width <= 0 or height <= 0:
+            continue
+        aspect = width / height
+        if aspect < 0.45 or aspect > 2.2:
+            continue
+        perimeter = float(cv2.arcLength(contour, closed=True))
+        circularity = 0.0 if perimeter == 0 else 4.0 * np.pi * area / (perimeter * perimeter)
+        if circularity < 0.35:
+            continue
+        moments = cv2.moments(contour)
+        if moments["m00"] == 0:
+            continue
+        cx = float(moments["m10"] / moments["m00"])
+        cy = float(moments["m01"] / moments["m00"])
+        brightness = float(np.mean(gray[y : y + height, x : x + width]))
+        confidence = float(np.clip(0.35 + circularity * 0.35 + brightness / 255.0 * 0.3, 0, 0.9))
+        candidates.append(
+            TrackPoint(
+                frame_index=frame_index,
+                x=cx,
+                y=cy,
+                confidence=confidence,
+                source="ball_address_vision",
+            ),
+        )
+    return candidates
+
+
+def _stable_address_from_candidates(
+    candidates: list[TrackPoint],
+    config: TrackerConfig,
+    source: str,
+) -> TrackPoint | None:
+    if not candidates:
+        return None
+
+    clusters: list[list[TrackPoint]] = []
+    radius = max(config.stationary_address_radius_px * 2.0, 12.0)
+    for candidate in candidates:
+        for cluster in clusters:
+            center = _median_point(cluster)
+            if _distance((candidate.x, candidate.y), center) <= radius:
+                cluster.append(candidate)
+                break
+        else:
+            clusters.append([candidate])
+
+    best_cluster = max(
+        clusters,
+        key=lambda cluster: (len(cluster), sum(point.confidence for point in cluster)),
+    )
+    if len(best_cluster) < min(config.stationary_address_frames, 2):
+        best = max(candidates, key=lambda point: point.confidence)
+        return TrackPoint(best.frame_index, best.x, best.y, best.confidence, source)
+
+    x, y = _median_point(best_cluster)
+    confidence = float(np.mean([point.confidence for point in best_cluster]))
+    frame_index = int(round(np.median([point.frame_index for point in best_cluster])))
+    return TrackPoint(
+        frame_index=frame_index,
+        x=x,
+        y=y,
+        confidence=confidence,
+        source=source,
+    )
 
 
 def _median_point(points: list[TrackPoint]) -> tuple[float, float]:

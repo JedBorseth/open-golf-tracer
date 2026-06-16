@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     tracker_smooth_window: int = 5
     tracker_stationary_address_frames: int = 4
     tracker_stationary_address_radius_px: float = 8.0
+    tracker_vision_ball_min_area_px: float = 6.0
+    tracker_vision_ball_max_area_px: float = 900.0
+    tracker_vision_ball_min_brightness: int = 145
+    tracker_vision_ball_roi_top_ratio: float = 0.25
     tracker_swing_motion_roi_px: int = 140
     tracker_swing_launch_speed_px: float = 7.0
     tracker_flight_speed_multiplier: float = 2.4
