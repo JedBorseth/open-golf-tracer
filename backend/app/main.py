@@ -24,7 +24,7 @@ def health() -> dict[str, object]:
     return {
         "status": "ok",
         "app": settings.app_name,
-        "tracking_mode": "club_swing_motion",
+        "tracking_mode": "hybrid_club_physics",
         "model_path": str(settings.model_path),
         "model_exists": settings.model_path.exists(),
         "cuda_required": settings.require_cuda,

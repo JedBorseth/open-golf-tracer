@@ -6,7 +6,6 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from app.services.impact import estimate_impact_frame
 from app.services.pipeline_errors import PipelineError
 from app.services.tracker import (
     TrackerConfig,
@@ -29,7 +28,7 @@ class SwingTrack:
 
 @dataclass(frozen=True)
 class ClubTrackerConfig:
-    impact_detection: bool = True
+    impact_detection: bool = False
     backswing_frames: int = 24
     follow_through_frames: int = 18
     impact_pre_roll_frames: int = 2
@@ -56,12 +55,7 @@ def build_club_swing_track(
     if not capture.isOpened():
         raise PipelineError("invalid_video", f"Could not read video: {video_path}")
 
-    fps = capture.get(cv2.CAP_PROP_FPS) or 30
     frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-
-    if impact_frame is None and config.impact_detection:
-        impact_estimate = estimate_impact_frame(video_path, fps)
-        impact_frame = impact_estimate.frame_index if impact_estimate is not None else None
 
     motion_scores = _scan_motion_scores(capture, config)
     capture.set(cv2.CAP_PROP_POS_FRAMES, 0)

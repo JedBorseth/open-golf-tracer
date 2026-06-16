@@ -8,9 +8,11 @@ from fastapi.responses import FileResponse
 from app.core.config import Settings, get_settings
 from app.models.job import JobRecord, JobResponse, MediaKind
 from app.services.club_tracker import ClubTrackerConfig
+from app.services.detector import GolfBallDetector
 from app.services.job_store import JobStore
 from app.services.pipeline import PipelineError, TracerPipeline
 from app.services.render import RenderConfig
+from app.services.tracker import TrackerConfig
 
 router = APIRouter()
 
@@ -123,6 +125,11 @@ def _default_extension(media_kind: MediaKind) -> str:
 def _build_pipeline(settings: Settings) -> TracerPipeline:
     return TracerPipeline(
         output_dir=settings.output_dir,
+        detector=GolfBallDetector(
+            settings.model_path,
+            settings.yolo_device,
+            settings.yolo_confidence,
+        ),
         club_config=ClubTrackerConfig(
             impact_detection=settings.tracker_impact_detection,
             backswing_frames=settings.club_backswing_frames,
@@ -137,9 +144,32 @@ def _build_pipeline(settings: Settings) -> TracerPipeline:
             camera_motion_compensation=settings.tracker_camera_motion_compensation,
             camera_motion_max_px=settings.tracker_camera_motion_max_px,
         ),
+        tracker_config=TrackerConfig(
+            max_gap_frames=settings.tracker_max_gap_frames,
+            detection_gate_px=settings.tracker_detection_gate_px,
+            optical_flow_gate_px=settings.tracker_optical_flow_gate_px,
+            smooth_window=settings.tracker_smooth_window,
+            stationary_address_frames=settings.tracker_stationary_address_frames,
+            stationary_address_radius_px=settings.tracker_stationary_address_radius_px,
+            swing_motion_roi_px=settings.tracker_swing_motion_roi_px,
+            swing_launch_speed_px=settings.tracker_swing_launch_speed_px,
+            flight_speed_multiplier=settings.tracker_flight_speed_multiplier,
+            flight_gravity_px_per_frame=settings.tracker_flight_gravity_px_per_frame,
+            stale_track_frames=settings.tracker_stale_track_frames,
+            stale_track_radius_px=settings.tracker_stale_track_radius_px,
+            synthetic_launch_frames=settings.tracker_synthetic_launch_frames,
+            synthetic_launch_upward_bias=settings.tracker_synthetic_launch_upward_bias,
+            camera_motion_compensation=settings.tracker_camera_motion_compensation,
+            camera_motion_max_px=settings.tracker_camera_motion_max_px,
+            impact_detection=settings.tracker_impact_detection,
+            impact_pre_roll_frames=settings.tracker_impact_pre_roll_frames,
+            post_impact_stale_frames=settings.tracker_post_impact_stale_frames,
+        ),
         render_config=RenderConfig(
             tracer_thickness=settings.tracer_thickness,
             tracer_tail_frames=settings.tracer_tail_frames,
             tracer_horizon_ratio=settings.tracer_horizon_ratio,
+            stabilize_tracer=settings.tracer_stabilize,
+            scene_motion_max_px=settings.tracker_camera_motion_max_px,
         ),
     )
