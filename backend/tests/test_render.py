@@ -1,7 +1,8 @@
 import numpy as np
 
 from app.services.club_tracker import SwingTrack
-from app.services.render import RenderConfig, _draw_swing_path, _segment_thickness
+from app.services.render import RenderConfig, _draw_swing_path, _screen_point, _segment_thickness
+from app.services.scene import SceneFrameTransform
 from app.services.tracker import TrackPoint
 
 
@@ -46,3 +47,14 @@ def test_impact_marker_fields_on_swing_track() -> None:
     )
     assert swing.impact_frame_index == 5
     assert swing.impact_x == 100.0
+
+
+def test_screen_point_reprojects_with_scene_motion() -> None:
+    transforms = [
+        SceneFrameTransform(0, cumulative_dx=0.0, cumulative_dy=0.0, horizon_y=70.0),
+        SceneFrameTransform(1, cumulative_dx=5.0, cumulative_dy=1.0, horizon_y=70.0),
+        SceneFrameTransform(2, cumulative_dx=11.0, cumulative_dy=2.0, horizon_y=72.0),
+    ]
+    point = TrackPoint(frame_index=0, x=40.0, y=90.0, confidence=0.9, source="motion")
+
+    assert _screen_point(point, frame_index=2, scene_transforms=transforms) == (51, 92)

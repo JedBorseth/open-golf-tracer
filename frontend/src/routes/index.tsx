@@ -64,11 +64,11 @@ function Home() {
     <main className="app-shell">
       <section className="hero">
         <p className="eyebrow">Golf Swing Tracer</p>
-        <h1>Upload a swing. See the club path.</h1>
+        <h1>Upload a swing. See the club path and ball flight.</h1>
         <p className="lede">
-          Upload a down-the-line or face-on swing video. We track club-head
-          motion, draw the swing path, and mark impact. Still photos get a hint
-          to upload video instead.
+          Upload a down-the-line or face-on swing video. We find the ball at
+          address, track the club through impact, infer the launch path, and
+          anchor the tracer to the scene as the camera moves.
         </p>
       </section>
 
@@ -103,7 +103,7 @@ function Home() {
         ) : null}
 
         <button disabled={!file || isUploading} onClick={() => void upload()}>
-          {isUploading ? 'Uploading...' : 'Trace swing path'}
+          {isUploading ? 'Uploading...' : 'Trace swing and flight'}
         </button>
       </section>
 

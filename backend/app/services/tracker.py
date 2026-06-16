@@ -5,7 +5,6 @@ import cv2
 import numpy as np
 
 from app.services.detector import Detection, GolfBallDetector
-from app.services.impact import estimate_impact_frame
 from app.services.pipeline_errors import PipelineError
 
 
@@ -32,13 +31,15 @@ class TrackerConfig:
     swing_motion_min_px: float = 2.0
     swing_motion_roi_px: int = 140
     swing_launch_speed_px: float = 7.0
+    flight_speed_multiplier: float = 2.4
+    flight_gravity_px_per_frame: float = 0.7
     stale_track_frames: int = 30
     stale_track_radius_px: float = 80.0
     synthetic_launch_frames: int = 45
     synthetic_launch_upward_bias: float = 0.85
     camera_motion_compensation: bool = True
     camera_motion_max_px: float = 35.0
-    impact_detection: bool = True
+    impact_detection: bool = False
     impact_pre_roll_frames: int = 2
     post_impact_stale_frames: int = 4
 
@@ -54,10 +55,6 @@ def build_video_track(
     if not capture.isOpened():
         raise PipelineError("invalid_video", f"Could not read video: {video_path}")
 
-    fps = capture.get(cv2.CAP_PROP_FPS) or 30
-    if impact_frame is None and config.impact_detection:
-        impact_estimate = estimate_impact_frame(video_path, fps)
-        impact_frame = impact_estimate.frame_index if impact_estimate is not None else None
     track_start_frame = max(0, (impact_frame or 0) - config.impact_pre_roll_frames)
 
     track: list[TrackPoint] = []
@@ -262,10 +259,152 @@ def build_video_track(
     return _smooth_track(track, config)
 
 
+def find_ball_address(
+    video_path: Path,
+    detector: GolfBallDetector,
+    config: TrackerConfig | None = None,
+    before_frame: int | None = None,
+) -> TrackPoint | None:
+    config = config or TrackerConfig()
+    capture = cv2.VideoCapture(str(video_path))
+    if not capture.isOpened():
+        raise PipelineError("invalid_video", f"Could not read video: {video_path}")
+
+    candidates: list[TrackPoint] = []
+    frame_index = 0
+    try:
+        while True:
+            if before_frame is not None and frame_index >= before_frame:
+                break
+            ok, frame = capture.read()
+            if not ok:
+                break
+
+            detection = _best_detection(detector.detect_frame(frame))
+            if detection is not None:
+                x, y = detection.center
+                candidates.append(
+                    TrackPoint(
+                        frame_index=frame_index,
+                        x=x,
+                        y=y,
+                        confidence=detection.confidence,
+                        source="ball_address",
+                    ),
+                )
+            frame_index += 1
+    finally:
+        capture.release()
+
+    if not candidates:
+        return None
+
+    clusters: list[list[TrackPoint]] = []
+    radius = max(config.stationary_address_radius_px * 2.0, 12.0)
+    for candidate in candidates:
+        for cluster in clusters:
+            center = _median_point(cluster)
+            if _distance((candidate.x, candidate.y), center) <= radius:
+                cluster.append(candidate)
+                break
+        else:
+            clusters.append([candidate])
+
+    best_cluster = max(
+        clusters,
+        key=lambda cluster: (len(cluster), sum(point.confidence for point in cluster)),
+    )
+    if len(best_cluster) < min(config.stationary_address_frames, 2):
+        return max(candidates, key=lambda point: point.confidence)
+
+    x, y = _median_point(best_cluster)
+    confidence = float(np.mean([point.confidence for point in best_cluster]))
+    frame_index = int(round(np.median([point.frame_index for point in best_cluster])))
+    return TrackPoint(
+        frame_index=frame_index,
+        x=x,
+        y=y,
+        confidence=confidence,
+        source="ball_address",
+    )
+
+
+def build_physics_flight(
+    ball_address: TrackPoint | None,
+    club_points: list[TrackPoint],
+    impact_frame: int | None,
+    config: TrackerConfig | None = None,
+) -> list[TrackPoint]:
+    config = config or TrackerConfig()
+    if ball_address is None or impact_frame is None:
+        return []
+
+    launch_vector = _launch_vector_from_swing(
+        _club_velocity_vector(club_points, impact_frame),
+        config,
+    )
+    speed = config.swing_launch_speed_px * config.flight_speed_multiplier
+    vx = launch_vector[0] * speed
+    vy = launch_vector[1] * speed
+    gravity = config.flight_gravity_px_per_frame
+
+    flight: list[TrackPoint] = []
+    for offset in range(1, config.synthetic_launch_frames + 1):
+        x = ball_address.x + vx * offset
+        y = ball_address.y + vy * offset + 0.5 * gravity * offset * offset
+        confidence = max(0.18, 0.72 - offset / max(config.synthetic_launch_frames, 1) * 0.42)
+        flight.append(
+            TrackPoint(
+                frame_index=impact_frame + offset,
+                x=x,
+                y=y,
+                confidence=confidence,
+                source="physics_flight",
+            ),
+        )
+    return flight
+
+
 def _best_detection(detections: list[Detection]) -> Detection | None:
     if not detections:
         return None
     return max(detections, key=lambda detection: detection.confidence)
+
+
+def _median_point(points: list[TrackPoint]) -> tuple[float, float]:
+    return (
+        float(np.median([point.x for point in points])),
+        float(np.median([point.y for point in points])),
+    )
+
+
+def _club_velocity_vector(
+    club_points: list[TrackPoint],
+    impact_frame: int,
+) -> tuple[float, float] | None:
+    if len(club_points) < 2:
+        return None
+
+    before = [
+        point
+        for point in club_points
+        if impact_frame - 8 <= point.frame_index <= impact_frame
+    ]
+    after = [
+        point
+        for point in club_points
+        if impact_frame <= point.frame_index <= impact_frame + 8
+    ]
+    if not before or not after:
+        nearest = sorted(club_points, key=lambda point: abs(point.frame_index - impact_frame))
+        if len(nearest) < 2:
+            return None
+        first, second = sorted(nearest[:2], key=lambda point: point.frame_index)
+    else:
+        first = min(before, key=lambda point: point.frame_index)
+        second = max(after, key=lambda point: point.frame_index)
+
+    return _unit_vector_from_points((first.x, first.y), (second.x, second.y))
 
 
 def _create_kalman_filter() -> cv2.KalmanFilter:

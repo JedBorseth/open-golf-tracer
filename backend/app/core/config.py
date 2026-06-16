@@ -16,6 +16,8 @@ class Settings(BaseSettings):
 
     max_upload_mb: int = 512
     require_cuda: bool = False
+    yolo_device: str = "cpu"
+    yolo_confidence: float = 0.25
 
     club_backswing_frames: int = 24
     club_follow_through_frames: int = 18
@@ -30,19 +32,22 @@ class Settings(BaseSettings):
     tracker_stationary_address_radius_px: float = 8.0
     tracker_swing_motion_roi_px: int = 140
     tracker_swing_launch_speed_px: float = 7.0
+    tracker_flight_speed_multiplier: float = 2.4
+    tracker_flight_gravity_px_per_frame: float = 0.7
     tracker_stale_track_frames: int = 30
     tracker_stale_track_radius_px: float = 80.0
     tracker_synthetic_launch_frames: int = 45
     tracker_synthetic_launch_upward_bias: float = 0.85
     tracker_camera_motion_compensation: bool = True
     tracker_camera_motion_max_px: float = 35.0
-    tracker_impact_detection: bool = True
+    tracker_impact_detection: bool = False
     tracker_impact_pre_roll_frames: int = 2
     tracker_post_impact_stale_frames: int = 4
 
     tracer_thickness: int = 8
     tracer_tail_frames: int = 120
     tracer_horizon_ratio: float = 0.42
+    tracer_stabilize: bool = True
 
     model_config = SettingsConfigDict(
         env_file=".env",
