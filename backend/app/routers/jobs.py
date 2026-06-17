@@ -137,6 +137,8 @@ def _build_pipeline(settings: Settings) -> TracerPipeline:
             impact_pre_roll_frames=settings.tracker_impact_pre_roll_frames,
             motion_threshold=settings.club_motion_threshold,
             roi_top_ratio=settings.club_roi_top_ratio,
+            min_impact_motion_score=settings.club_min_impact_motion_score,
+            max_camera_motion_area_ratio=settings.club_max_camera_motion_area_ratio,
             max_gap_frames=settings.tracker_max_gap_frames,
             smooth_window=settings.tracker_smooth_window,
             detection_gate_px=settings.tracker_detection_gate_px,
