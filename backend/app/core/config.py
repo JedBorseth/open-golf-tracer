@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     club_follow_through_frames: int = 18
     club_motion_threshold: float = 16.0
     club_roi_top_ratio: float = 0.22
+    club_min_impact_motion_score: float = 1200.0
+    club_max_camera_motion_area_ratio: float = 0.12
 
     tracker_max_gap_frames: int = 12
     tracker_detection_gate_px: float = 120.0
