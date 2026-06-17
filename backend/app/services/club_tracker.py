@@ -43,6 +43,8 @@ class ClubTrackerConfig:
     camera_motion_compensation: bool = True
     camera_motion_max_px: float = 35.0
     fallback_impact_search_frames: int = 45
+    min_impact_motion_score: float = 1200.0
+    max_camera_motion_area_ratio: float = 0.12
 
 
 def build_club_swing_track(
@@ -70,7 +72,6 @@ def build_club_swing_track(
         if impact_frame is not None
         else len(motion_scores) - 1
     )
-
     track: list[TrackPoint] = []
     kalman = _create_kalman_filter()
     kalman_initialized = False
@@ -225,12 +226,6 @@ def build_club_swing_track(
             )
             resolved_impact_x = nearest.x
             resolved_impact_y = nearest.y
-    else:
-        peak = max(smoothed, key=lambda point: point.confidence)
-        resolved_impact_frame = peak.frame_index
-        resolved_impact_x = peak.x
-        resolved_impact_y = peak.y
-
     return SwingTrack(
         points=smoothed,
         impact_frame_index=resolved_impact_frame,
@@ -258,13 +253,12 @@ def _scan_motion_scores(capture: cv2.VideoCapture, config: ClubTrackerConfig) ->
 def _estimate_impact_from_motion(scores: list[float], config: ClubTrackerConfig) -> int | None:
     if len(scores) < 5:
         return None
-    window = min(config.fallback_impact_search_frames, len(scores))
-    segment = np.array(scores[:window], dtype=np.float32)
+    segment = np.array(scores, dtype=np.float32)
     baseline = float(np.median(segment))
     mad = float(np.median(np.abs(segment - baseline)))
     peak_index = int(np.argmax(segment))
     peak = float(segment[peak_index])
-    threshold = baseline + max(4.0 * mad, 12.0)
+    threshold = max(config.min_impact_motion_score, baseline + max(4.0 * mad, 12.0))
     if peak < threshold:
         return None
     return peak_index
@@ -284,6 +278,8 @@ def _club_head_from_motion(
     diff[:roi_top, :] = 0
     _, mask = cv2.threshold(diff, int(config.motion_threshold), 255, cv2.THRESH_BINARY)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    if _motion_area_ratio(mask) > config.max_camera_motion_area_ratio:
+        return None
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return None
@@ -324,7 +320,30 @@ def _motion_score(previous_gray: np.ndarray, gray: np.ndarray, config: ClubTrack
     diff = cv2.absdiff(previous_gray, gray)
     roi_top = int(gray.shape[0] * config.roi_top_ratio)
     lower = diff[roi_top:, :]
-    return float(np.percentile(lower, 92))
+    _, mask = cv2.threshold(lower, int(config.motion_threshold), 255, cv2.THRESH_BINARY)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    if _motion_area_ratio(mask) > config.max_camera_motion_area_ratio:
+        return 0.0
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    scores: list[float] = []
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area < config.min_motion_blob_area:
+            continue
+        contour_mask = np.zeros(mask.shape, dtype=np.uint8)
+        cv2.drawContours(contour_mask, [contour], -1, 255, -1)
+        motion_strength = float(cv2.mean(lower, mask=contour_mask)[0])
+        scores.append(area * motion_strength / 100.0)
+    if not scores:
+        return 0.0
+    return max(scores)
+
+
+def _motion_area_ratio(mask: np.ndarray) -> float:
+    if mask.size == 0:
+        return 0.0
+    return float(cv2.countNonZero(mask) / mask.size)
 
 
 def _passes_gate(
