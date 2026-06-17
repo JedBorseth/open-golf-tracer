@@ -1,6 +1,21 @@
 import { createFileRoute } from '@tanstack/react-router'
 import * as React from 'react'
-import { createJob, getJob, getResultUrl, type JobResponse } from '~/lib/api'
+import {
+  createJob,
+  getJob,
+  getResultUrl,
+  getSourceUrl,
+  getTrace,
+  renderAdjustedJob,
+  type JobResponse,
+  type TraceAdjustments,
+  type TraceData,
+} from '~/lib/api'
+import {
+  DEFAULT_TRACE_ADJUSTMENTS,
+  adjustedBallFlight,
+  flightPath,
+} from '~/lib/trace-preview'
 
 export const Route = createFileRoute('/')({
   component: Home,
@@ -10,7 +25,12 @@ function Home() {
   const [file, setFile] = React.useState<File | null>(null)
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(null)
   const [job, setJob] = React.useState<JobResponse | null>(null)
+  const [trace, setTrace] = React.useState<TraceData | null>(null)
+  const [adjustments, setAdjustments] = React.useState<TraceAdjustments>(
+    DEFAULT_TRACE_ADJUSTMENTS,
+  )
   const [isUploading, setIsUploading] = React.useState(false)
+  const [isRendering, setIsRendering] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
   React.useEffect(() => {
@@ -38,6 +58,16 @@ function Home() {
     return () => window.clearInterval(interval)
   }, [job])
 
+  React.useEffect(() => {
+    if (!job || job.status !== 'complete' || !job.trace_url || job.media_kind !== 'video') {
+      return
+    }
+
+    void getTrace(job)
+      .then(setTrace)
+      .catch((traceError: Error) => setError(traceError.message))
+  }, [job])
+
   async function upload() {
     if (!file) {
       setError('Choose an image or video first.')
@@ -47,6 +77,8 @@ function Home() {
     setIsUploading(true)
     setError(null)
     setJob(null)
+    setTrace(null)
+    setAdjustments(DEFAULT_TRACE_ADJUSTMENTS)
 
     try {
       setJob(await createJob(file))
@@ -57,8 +89,27 @@ function Home() {
     }
   }
 
+  async function rerender() {
+    if (!job) {
+      return
+    }
+
+    setIsRendering(true)
+    setError(null)
+    try {
+      setJob(await renderAdjustedJob(job.job_id, adjustments))
+    } catch (renderError) {
+      setError(renderError instanceof Error ? renderError.message : 'Render failed.')
+    } finally {
+      setIsRendering(false)
+    }
+  }
+
   const resultUrl = job ? getResultUrl(job) : null
+  const sourceUrl = job ? getSourceUrl(job) : null
   const isVideo = job?.media_kind === 'video'
+  const adjustedFlight = trace ? adjustedBallFlight(trace, adjustments) : []
+  const adjustedPath = flightPath(adjustedFlight)
 
   return (
     <main className="app-shell">
@@ -82,6 +133,8 @@ function Home() {
             onChange={(event) => {
               setFile(event.currentTarget.files?.[0] ?? null)
               setJob(null)
+              setTrace(null)
+              setAdjustments(DEFAULT_TRACE_ADJUSTMENTS)
               setError(null)
             }}
           />
@@ -119,6 +172,81 @@ function Home() {
               {job.error_code}: {job.error_message}
             </p>
           ) : null}
+          {trace && sourceUrl && isVideo ? (
+            <div className="trace-editor">
+              <div className="trace-preview">
+                <video className="preview" src={sourceUrl} controls playsInline muted />
+                <svg
+                  aria-label="Adjusted ball flight preview"
+                  className="trace-overlay"
+                  preserveAspectRatio="xMidYMid meet"
+                  viewBox={`0 0 ${trace.video.width} ${trace.video.height}`}
+                >
+                  {adjustedPath ? (
+                    <>
+                      <path className="trace-flight" d={adjustedPath} />
+                      <circle
+                        className="trace-address"
+                        cx={adjustedFlight[0]?.x ?? 0}
+                        cy={adjustedFlight[0]?.y ?? 0}
+                        r="7"
+                      />
+                    </>
+                  ) : null}
+                </svg>
+              </div>
+
+              <div className="slider-grid">
+                <Slider
+                  label="Horizontal placement"
+                  max={220}
+                  min={-220}
+                  step={1}
+                  value={adjustments.x_offset_px}
+                  valueLabel={`${adjustments.x_offset_px.toFixed(0)} px`}
+                  onChange={(value) =>
+                    setAdjustments((current) => ({ ...current, x_offset_px: value }))
+                  }
+                />
+                <Slider
+                  label="Vertical placement"
+                  max={220}
+                  min={-220}
+                  step={1}
+                  value={adjustments.y_offset_px}
+                  valueLabel={`${adjustments.y_offset_px.toFixed(0)} px`}
+                  onChange={(value) =>
+                    setAdjustments((current) => ({ ...current, y_offset_px: value }))
+                  }
+                />
+                <Slider
+                  label="Arc"
+                  max={2.2}
+                  min={0.35}
+                  step={0.05}
+                  value={adjustments.arc_scale}
+                  valueLabel={`${adjustments.arc_scale.toFixed(2)}x`}
+                  onChange={(value) =>
+                    setAdjustments((current) => ({ ...current, arc_scale: value }))
+                  }
+                />
+              </div>
+
+              <div className="action-row">
+                <button type="button" onClick={() => setAdjustments(DEFAULT_TRACE_ADJUSTMENTS)}>
+                  Reset preview
+                </button>
+                <button
+                  disabled={isRendering || job.status === 'running'}
+                  type="button"
+                  onClick={() => void rerender()}
+                >
+                  {isRendering || job.status === 'running' ? 'Rendering...' : 'Render adjusted video'}
+                </button>
+              </div>
+            </div>
+          ) : null}
+
           {resultUrl ? (
             <div className="result">
               {isVideo ? (
@@ -136,6 +264,35 @@ function Home() {
 
       {error ? <p className="error">{error}</p> : null}
     </main>
+  )
+}
+
+type SliderProps = {
+  label: string
+  max: number
+  min: number
+  step: number
+  value: number
+  valueLabel: string
+  onChange: (value: number) => void
+}
+
+function Slider({ label, max, min, onChange, step, value, valueLabel }: SliderProps) {
+  return (
+    <label className="slider-control">
+      <span>
+        {label}
+        <strong>{valueLabel}</strong>
+      </span>
+      <input
+        max={max}
+        min={min}
+        step={step}
+        type="range"
+        value={value}
+        onChange={(event) => onChange(Number(event.currentTarget.value))}
+      />
+    </label>
   )
 }
 

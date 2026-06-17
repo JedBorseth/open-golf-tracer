@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 
 from app.core.config import Settings, get_settings
 from app.models.job import JobRecord, JobResponse, MediaKind
+from app.models.trace import TraceAdjustments, TraceData
 from app.services.club_tracker import ClubTrackerConfig
 from app.services.detector import GolfBallDetector
 from app.services.job_store import JobStore
@@ -90,8 +91,63 @@ def get_result(
     return FileResponse(
         path=record.output_path,
         filename=record.output_path.name,
+        media_type="video/mp4" if record.media_kind == "video" else record.content_type,
+    )
+
+
+@router.get("/{job_id}/source")
+def get_source(
+    job_id: str,
+    store: Annotated[JobStore, Depends(get_job_store)],
+) -> FileResponse:
+    record = store.get(job_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    if not record.input_path.exists():
+        raise HTTPException(status_code=404, detail="Source media was not found.")
+    return FileResponse(
+        path=record.input_path,
+        filename=record.original_filename,
         media_type=record.content_type,
     )
+
+
+@router.get("/{job_id}/trace", response_model=TraceData)
+def get_trace(
+    job_id: str,
+    store: Annotated[JobStore, Depends(get_job_store)],
+    pipeline: Annotated[TracerPipeline, Depends(get_pipeline)],
+) -> TraceData:
+    record = store.get(job_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    if record.media_kind != "video":
+        raise HTTPException(status_code=404, detail="Trace geometry is only available for videos.")
+    try:
+        return pipeline.load_trace(record)
+    except PipelineError as error:
+        raise HTTPException(status_code=404, detail=error.message) from error
+
+
+@router.post("/{job_id}/render", response_model=JobResponse)
+def render_adjusted_result(
+    job_id: str,
+    adjustments: TraceAdjustments,
+    background_tasks: BackgroundTasks,
+    settings: Annotated[Settings, Depends(get_settings)],
+    store: Annotated[JobStore, Depends(get_job_store)],
+) -> JobResponse:
+    record = store.get(job_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    if record.media_kind != "video":
+        raise HTTPException(status_code=400, detail="Only video jobs can be rerendered.")
+    if record.trace_path is None or not record.trace_path.exists():
+        raise HTTPException(status_code=409, detail="Trace geometry is not ready for this job.")
+
+    record = store.mark_running(job_id)
+    background_tasks.add_task(rerender_job, job_id, adjustments, settings)
+    return JobResponse.from_record(record)
 
 
 def run_job(job_id: str, settings: Settings) -> None:
@@ -101,11 +157,37 @@ def run_job(job_id: str, settings: Settings) -> None:
     try:
         job = store.mark_running(job_id)
         output_path = pipeline.process(job)
-        store.mark_complete(job_id, output_path, f"/api/jobs/{job_id}/result")
+        store.mark_complete(
+            job_id,
+            output_path,
+            f"/api/jobs/{job_id}/result",
+            trace_path=pipeline.trace_path_for(job),
+        )
     except PipelineError as error:
         store.mark_failed(job_id, error.code, error.message)
     except Exception as error:  # noqa: BLE001 - background jobs must surface failures.
         store.mark_failed(job_id, "processing_failed", str(error))
+
+
+def rerender_job(job_id: str, adjustments: TraceAdjustments, settings: Settings) -> None:
+    store = JobStore(settings.job_store_dir)
+    pipeline = _build_pipeline(settings)
+
+    try:
+        job = store.get(job_id)
+        if job is None:
+            raise PipelineError("job_not_found", "Job not found.")
+        output_path = pipeline.rerender(job, adjustments)
+        store.mark_complete(
+            job_id,
+            output_path,
+            f"/api/jobs/{job_id}/result",
+            trace_path=job.trace_path or pipeline.trace_path_for(job),
+        )
+    except PipelineError as error:
+        store.mark_failed(job_id, error.code, error.message)
+    except Exception as error:  # noqa: BLE001 - background jobs must surface failures.
+        store.mark_failed(job_id, "render_failed", str(error))
 
 
 def _media_kind(content_type: str | None) -> MediaKind | None:
