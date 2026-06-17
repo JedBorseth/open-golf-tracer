@@ -46,10 +46,18 @@ class JobStore:
         record.error_message = None
         return self.save(record)
 
-    def mark_complete(self, job_id: str, output_path: Path, result_url: str) -> JobRecord:
+    def mark_complete(
+        self,
+        job_id: str,
+        output_path: Path,
+        result_url: str,
+        trace_path: Path | None = None,
+    ) -> JobRecord:
         record = self._require(job_id)
         record.status = JobStatus.complete
         record.output_path = output_path
+        if trace_path is not None:
+            record.trace_path = trace_path
         record.result_url = result_url
         record.error_code = None
         record.error_message = None

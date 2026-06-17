@@ -1,6 +1,13 @@
+import json
 from pathlib import Path
 
 from app.models.job import JobRecord
+from app.models.trace import (
+    TraceAdjustments,
+    TraceData,
+    adjusted_trace_parts,
+    trace_from_parts,
+)
 from app.services.club_tracker import ClubTrackerConfig, SwingTrack, build_club_swing_track
 from app.services.detector import GolfBallDetector
 from app.services.pipeline_errors import PipelineError
@@ -42,6 +49,13 @@ class TracerPipeline:
         return output_path
 
     def _process_video(self, job: JobRecord) -> Path:
+        trace = self.analyze_video(job)
+        self.save_trace(job, trace)
+        output_path = self.output_dir / f"{job.id}.mp4"
+        self.render_trace(job, trace, output_path)
+        return output_path
+
+    def analyze_video(self, job: JobRecord) -> TraceData:
         swing = build_club_swing_track(job.input_path, self.club_config)
         ball_address = self._resolve_ball_address(job.input_path, swing)
         ball_flight = build_physics_flight(
@@ -50,7 +64,16 @@ class TracerPipeline:
             swing.impact_frame_index,
             self.tracker_config,
         )
-        output_path = self.output_dir / f"{job.id}.mp4"
+        return trace_from_parts(job.input_path, swing, ball_address, ball_flight)
+
+    def render_trace(
+        self,
+        job: JobRecord,
+        trace: TraceData,
+        output_path: Path,
+        adjustments: TraceAdjustments | None = None,
+    ) -> Path:
+        swing, ball_address, ball_flight = adjusted_trace_parts(trace, adjustments)
         render_hybrid_trace(
             job.input_path,
             output_path,
@@ -60,6 +83,37 @@ class TracerPipeline:
             self.render_config,
         )
         return output_path
+
+    def rerender(
+        self,
+        job: JobRecord,
+        adjustments: TraceAdjustments,
+    ) -> Path:
+        trace = self.load_trace(job)
+        output_path = self.output_dir / f"{job.id}.mp4"
+        return self.render_trace(job, trace, output_path, adjustments)
+
+    def trace_path_for(self, job: JobRecord) -> Path:
+        return self.output_dir / f"{job.id}.trace.json"
+
+    def save_trace(self, job: JobRecord, trace: TraceData) -> Path:
+        trace_path = self.trace_path_for(job)
+        trace_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = trace_path.with_suffix(".tmp")
+        with tmp_path.open("w", encoding="utf-8") as file:
+            json.dump(trace.model_dump(mode="json"), file, indent=2, sort_keys=True)
+        tmp_path.replace(trace_path)
+        return trace_path
+
+    def load_trace(self, job: JobRecord) -> TraceData:
+        trace_path = job.trace_path or self.trace_path_for(job)
+        if not trace_path.exists():
+            raise PipelineError(
+                "trace_not_found",
+                "Trace geometry is not ready for this job.",
+            )
+        with trace_path.open("r", encoding="utf-8") as file:
+            return TraceData.model_validate(json.load(file))
 
     def _resolve_ball_address(
         self,

@@ -28,6 +28,7 @@ class JobRecord(BaseModel):
     content_type: str
     input_path: Path
     output_path: Path | None = None
+    trace_path: Path | None = None
     result_url: str | None = None
     error_code: str | None = None
     error_message: str | None = None
@@ -40,6 +41,8 @@ class JobResponse(BaseModel):
     status: JobStatus
     media_kind: MediaKind
     result_url: str | None = None
+    source_url: str | None = None
+    trace_url: str | None = None
     error_code: str | None = None
     error_message: str | None = None
     created_at: datetime
@@ -52,6 +55,8 @@ class JobResponse(BaseModel):
             status=record.status,
             media_kind=record.media_kind,
             result_url=record.result_url,
+            source_url=f"/api/jobs/{record.id}/source",
+            trace_url=f"/api/jobs/{record.id}/trace" if record.trace_path is not None else None,
             error_code=record.error_code,
             error_message=record.error_message,
             created_at=record.created_at,

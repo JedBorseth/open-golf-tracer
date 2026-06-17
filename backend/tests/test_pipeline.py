@@ -5,6 +5,7 @@ import numpy as np
 
 import app.services.pipeline as pipeline_module
 from app.models.job import JobRecord
+from app.models.trace import TraceAdjustments
 from app.services.club_tracker import ClubTrackerConfig, SwingTrack
 from app.services.detector import Detection
 from app.services.pipeline import TracerPipeline
@@ -25,11 +26,20 @@ class FakeDetector:
         return []
 
 
-def test_hybrid_pipeline_produces_video_with_physics_trace(tmp_path: Path) -> None:
+def test_hybrid_pipeline_produces_video_with_physics_trace(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     video_path = _write_hybrid_swing_video(tmp_path / "swing.mp4", frame_count=16)
     model_path = tmp_path / "fake-ball-model.pt"
     model_path.write_text("fake")
     output_dir = tmp_path / "outputs"
+    swing = _swing_track()
+    monkeypatch.setattr(
+        pipeline_module,
+        "build_club_swing_track",
+        lambda input_path, config: swing,
+    )
     pipeline = TracerPipeline(
         output_dir=output_dir,
         detector=FakeDetector(model_path),  # type: ignore[arg-type]
@@ -40,6 +50,7 @@ def test_hybrid_pipeline_produces_video_with_physics_trace(tmp_path: Path) -> No
             impact_pre_roll_frames=0,
             motion_threshold=8,
             min_motion_blob_area=20,
+            min_impact_motion_score=40,
             smooth_window=1,
         ),
         tracker_config=TrackerConfig(
@@ -67,6 +78,27 @@ def test_hybrid_pipeline_produces_video_with_physics_trace(tmp_path: Path) -> No
     assert output_path.exists()
     assert output_path.suffix == ".mp4"
     assert output_path.stat().st_size > 0
+    trace = pipeline.load_trace(
+        JobRecord(
+            id="job-1",
+            media_kind="video",
+            original_filename="swing.mp4",
+            content_type="video/mp4",
+            input_path=video_path,
+            trace_path=pipeline.trace_path_for(
+                JobRecord(
+                    id="job-1",
+                    media_kind="video",
+                    original_filename="swing.mp4",
+                    content_type="video/mp4",
+                    input_path=video_path,
+                ),
+            ),
+        ),
+    )
+    assert trace.video.width == 320
+    assert trace.ball_address.source == "ball_address"
+    assert len(trace.ball_flight) == 8
 
 
 def test_hybrid_pipeline_draws_predicted_flight_without_model_on_final_impact(
@@ -134,6 +166,63 @@ def test_pipeline_resolves_ball_address_with_vision_when_model_is_missing(
     assert abs(address.y - 125) <= 2
 
 
+def test_pipeline_rerender_applies_adjustments_without_retracking(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    video_path = _write_hybrid_swing_video(tmp_path / "swing.mp4", frame_count=16)
+    output_dir = tmp_path / "outputs"
+    swing = _swing_track()
+    monkeypatch.setattr(
+        pipeline_module,
+        "build_club_swing_track",
+        lambda input_path, config: swing,
+    )
+    pipeline = TracerPipeline(
+        output_dir=output_dir,
+        detector=None,
+        club_config=ClubTrackerConfig(
+            backswing_frames=5,
+            follow_through_frames=5,
+            impact_pre_roll_frames=0,
+            motion_threshold=8,
+            min_motion_blob_area=20,
+            min_impact_motion_score=40,
+            smooth_window=1,
+        ),
+        tracker_config=TrackerConfig(synthetic_launch_frames=8, smooth_window=1),
+        render_config=RenderConfig(stabilize_tracer=False, tracer_max_gap_frames=8),
+    )
+    job = JobRecord(
+        id="adjustable",
+        media_kind="video",
+        original_filename="swing.mp4",
+        content_type="video/mp4",
+        input_path=video_path,
+    )
+    pipeline.process(job)
+    trace_path = pipeline.trace_path_for(job)
+    trace = pipeline.load_trace(job.model_copy(update={"trace_path": trace_path}))
+    _, address, flight = pipeline_module.adjusted_trace_parts(
+        trace,
+        TraceAdjustments(x_offset_px=25, y_offset_px=-12, arc_scale=1.5),
+    )
+
+    def fail_tracking(input_path, config):  # noqa: ANN001
+        raise AssertionError("rerender should use saved trace geometry")
+
+    monkeypatch.setattr(pipeline_module, "build_club_swing_track", fail_tracking)
+    output_path = pipeline.rerender(
+        job.model_copy(update={"trace_path": trace_path}),
+        TraceAdjustments(x_offset_px=25, y_offset_px=-12, arc_scale=1.5),
+    )
+
+    assert output_path.exists()
+    assert address.x == trace.ball_address.x + 25
+    assert address.y == trace.ball_address.y - 12
+    assert flight[0].y < trace.ball_flight[0].y
+
+
 def _detection(center_x: float, center_y: float, confidence: float = 0.9) -> Detection:
     return Detection(
         x=center_x - 2,
@@ -143,6 +232,19 @@ def _detection(center_x: float, center_y: float, confidence: float = 0.9) -> Det
         confidence=confidence,
         class_id=0,
         label="golf_ball",
+    )
+
+
+def _swing_track() -> SwingTrack:
+    return SwingTrack(
+        points=[
+            pipeline_module.TrackPoint(3, 80.0, 140.0, 0.8, "motion"),
+            pipeline_module.TrackPoint(5, 100.0, 125.0, 0.9, "motion"),
+            pipeline_module.TrackPoint(7, 130.0, 110.0, 0.8, "motion"),
+        ],
+        impact_frame_index=5,
+        impact_x=100.0,
+        impact_y=125.0,
     )
 
 
